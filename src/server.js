@@ -1,5 +1,6 @@
 require('dotenv').config();
 const express = require('express');
+const cors = require('cors');
 
 const authMiddleware = require('./middleware/auth');
 const healthRoutes = require('./routes/health');
@@ -8,6 +9,13 @@ const whatsappRoutes = require('./routes/whatsapp');
 const xubioDebugRoutes = require('./routes/xubio-debug');
 
 const app = express();
+
+// Habilitado para cualquier origen mientras probamos (consola de pruebas,
+// prototipos en claude.ai, etc.). Cuando el panel tenga un dominio fijo
+// (Netlify/Vercel/GitHub Pages), conviene restringir esto a ese dominio
+// en vez de dejarlo abierto a cualquiera.
+app.use(cors());
+
 app.use(express.json());
 
 // Sin autenticación: chequeo de salud del servicio.
