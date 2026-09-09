@@ -1,0 +1,15 @@
+# Para correr esto solo, en su propio VPS:
+#   docker compose up -d --build
+#
+# Para correrlo JUNTO al servidor Traccar (recomendado — un solo VPS,
+# un solo lugar que mantener): copiá el bloque "lubeck-backend:" de acá
+# abajo dentro del docker-compose.yml que ya tengas para Traccar, así
+# quedan los dos servicios en el mismo archivo y en la misma red.
+
+services:
+  lubeck-backend:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      - "3000:3000"
