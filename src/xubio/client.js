@@ -98,6 +98,99 @@
 // proyecto) — no hace falta ningún cambio de código por esto, es solo
 // confirmación de que `ProductoVentaBean` (el que ya se usa en
 // buscarProductoPorNombre) es el correcto.
+//
+// ✅✅ CONFIRMADO FUNCIONANDO — soporte de Xubio probó nuestro payload exacto
+// contra `/facturar` (28/9) y devolvió `HTTP 200` con una factura real
+// (`transaccionid: 94150317`, `numeroDocumento: "B-00006-00000001"`). El
+// endpoint, el punto de venta (264532) y el producto están 100% validados.
+// El 401 que veníamos viendo **no era un problema de permisos** — era, una
+// vez más (mismo patrón que el 500 genérico de semanas atrás), un error de
+// validación de datos disfrazado de un código HTTP que no tenía nada que
+// ver. El error real, según soporte: con `condicionDePago: 2` (Contado),
+// Xubio exige que `transaccionCobranzaItems` tenga al menos un ítem con el
+// medio de cobro — lo estábamos mandando vacío (`[]`), lo cual dispara
+// `FunctionalException: Debe especificar al menos un item de cobro para
+// comprobantes al contado`.
+//
+// ⚠️ OJO — la prueba de soporte "funcionó" cambiando `condicionDePago` de 2
+// (Contado) a 1 (Cuenta Corriente), que evita tener que declarar el cobro.
+// **Eso no sirve para Lubeck**: la inmensa mayoría de las ventas son al
+// contado (efectivo/tarjeta/transferencia en el momento), no a cuenta
+// corriente (fiado, a cobrar después) — dejar `condicionDePago: 1` fijo
+// haría que cada factura quede registrada contablemente como una deuda
+// pendiente de cobro, aunque el cliente ya haya pagado. Es un problema
+// contable/fiscal real, no un detalle menor.
+//
+// ✅ SOLUCIÓN CORRECTA (implementada para Contado, 28/9): mantener
+// `condicionDePago: 2` para las ventas al contado (que son casi todas) y
+// completar bien `transaccionCobranzaItems` con el medio de cobro real —
+// esto es exactamente el dato de "método de pago" (Tarjeta de crédito /
+// Tarjeta de débito / Contado / Transferencia / Cuenta corriente) que ya se
+// captura en la interfaz de Técnicos Lubeck y Administración Lubeck desde
+// el 15/9, y que había quedado anotado como "todavía no confirmado en qué
+// campo de Xubio va" — ya lo sabemos: va acá.
+//
+// ✅ CONFIRMADO (28/9) — se leyó una factura real de Lubeck, de Contado, vía
+// `GET comprobanteVentaBean/94023585` (numeroDocumento "B-00008-00001174").
+// Su `transaccionCobranzaItems` real:
+//   [{ cuentaTipo: "1", cuentaId: -13, moneda: {ID:-2}, cotizacionMonTransaccion: 1,
+//      importeMonPrincipal: 165000, importeMonTransaccion: 165000, descripcion: "" }]
+// Es decir, para Contado, Lubeck cobra contra la cuenta cuentaTipo "1" /
+// cuentaId -13 en su plan de cuentas de Xubio (los importes son iguales al
+// importetotal de la factura, porque se cobró todo de una vez contra esa
+// única cuenta). Estos valores son específicos de la cuenta de Lubeck — no
+// sirven para otra cuenta de Xubio ni se pueden adivinar para otros métodos
+// de pago. Ya están cargados abajo en `CUENTAS_DE_COBRO` y usados en
+// `crearFacturaVenta()`. Transferencia (condicionDePago 7) no necesita
+// cuenta — confirmado que no lleva transaccionCobranzaItems (ver bloque
+// "RESUELTO" más abajo). Todavía FALTA el dato de cuenta para tarjeta de
+// crédito/débito (3/4/5/6) si resulta que la necesitan.
+//
+// ✅ CONFIRMADO (28/9, soporte de Xubio) — tabla completa de `condicionDePago`:
+//   1 = Cuenta Corriente   (NO requiere transaccionCobranzaItems)
+//   2 = Contado            (requiere transaccionCobranzaItems)
+//   3 = Cheque de Terceros
+//   4 = Tarjeta de Crédito
+//   5 = Tarjeta de Débito
+//   6 = Otra
+// Esto cierra el mapeo pendiente de las 5 opciones de "método de pago" que
+// ya se capturan en Técnicos Lubeck / Administración Lubeck desde el 15/9:
+//   contado (efectivo)  → condicionDePago 2
+//   tarjeta_credito      → condicionDePago 4
+//   tarjeta_debito        → condicionDePago 5
+//   cuenta_corriente     → condicionDePago 1
+//   transferencia        → condicionDePago 7 (ver "RESUELTO" abajo — no 6)
+//
+// ✅ RESUELTO (28/9) — el misterio del `condicionDePago: 7` (el código no
+// documentado por soporte, pero el más usado en el historial real de
+// Lubeck). Se leyó la factura real 94168264 (`GET comprobanteVentaBean/
+// 94168264`) y Leandro la revisó directamente en la pantalla de Xubio: ese
+// comprobante figura ahí con condición de pago **"Otra"** — y confirmó que
+// **Xubio no tiene ninguna opción de condición de pago llamada
+// "Transferencia"**. O sea: en la tabla que dio soporte por mail, "6 = Otra"
+// no es lo que realmente usa la cuenta de Lubeck — el código real que la
+// propia pantalla de Xubio muestra como "Otra" es el **7**, no el 6 (por qué
+// el mail de soporte dice 6 queda sin explicar, pero la evidencia directa de
+// la pantalla de Xubio pesa más que el mail). Como Xubio no tiene una opción
+// dedicada a "Transferencia", así es como Lubeck ya viene registrando sus
+// transferencias en la práctica: como "Otra" → `condicionDePago: 7`.
+//
+// Bonus confirmado con el mismo dato: esa factura real (94168264) tiene
+// `transaccionCobranzaItems: []` (vacío) y a Xubio no le molestó — le dio
+// CAE igual. Es decir, `condicionDePago: 7` (Otra) se comporta como el 1
+// (Cuenta Corriente): NO exige declarar cómo se cobró. Con esto ya tenemos
+// confirmado explícitamente: 1 y 7 NO necesitan transaccionCobranzaItems, 2
+// SÍ. Sigue sin confirmarse 3/4/5/6 (cheque, tarjeta crédito/débito, "otra"-
+// el-código-6-que-tal-vez-ni-se-use) — para esos, si hace falta, se
+// confirmará leyendo una factura real de cada uno cuando se necesite, nunca
+// adivinando.
+//
+// Falta todavía (no bloquea Contado ni Transferencia, que ya están
+// resueltos): escribir la lógica que elige `condicionDePago` dinámicamente
+// según el método de pago real de cada servicio (hoy `crearFacturaVenta()`
+// usa siempre el mismo default de `XUBIO_DEFAULTS.condicionDePago` para
+// todas las facturas) — así como los `cuentaTipo`/`cuentaId` de tarjeta de
+// crédito/débito si resultan ser necesarios.
 
 const XUBIO_DEFAULTS = {
   clienteConsumidorFinalId: process.env.XUBIO_CLIENTE_CONSUMIDOR_FINAL_ID || '7799597',
@@ -108,6 +201,19 @@ const XUBIO_DEFAULTS = {
   condicionDePago: Number(process.env.XUBIO_CONDICION_PAGO || 2),
   vendedorId: process.env.XUBIO_VENDEDOR_ID || null,
   provinciaId: process.env.XUBIO_PROVINCIA_ID || null,
+};
+
+// Cuenta real de cobro (transaccionCobranzaItems) que usa Lubeck en Xubio,
+// por condicionDePago — leída directamente de facturas reales ya emitidas
+// (ver comentario grande arriba, "CONFIRMADO 28/9"). Solo agregar una
+// entrada acá cuando se haya leído una factura real de ese tipo — nunca
+// adivinar cuentaTipo/cuentaId.
+const CUENTAS_DE_COBRO = {
+  2: { cuentaTipo: '1', cuentaId: -13 }, // Contado (efectivo) — confirmado 28/9 con factura real 94023585
+  // 1 (Cuenta Corriente) y 7 (Transferencia = "Otra" en Xubio) NO llevan
+  // entrada acá a propósito: confirmado con facturas reales que Xubio no
+  // exige transaccionCobranzaItems para esos dos (queda vacío, y así está
+  // bien). Ver bloque "RESUELTO (28/9)" más arriba.
 };
 
 const BASE_URL = 'https://xubio.com/API/1.1';
@@ -286,6 +392,25 @@ async function crearFacturaVenta(servicio) {
     transaccionPercepcionItems: [],
     transaccionCobranzaItems: [],
   };
+
+  // Si tenemos la cuenta de cobro real de Lubeck para este condicionDePago
+  // (ver CUENTAS_DE_COBRO arriba), armamos el ítem — Xubio lo exige para
+  // los métodos de cobro inmediato (confirmado para Contado/2; ver nota
+  // arriba sobre 3/4/5/6/7 todavía sin confirmar).
+  const cuentaCobro = CUENTAS_DE_COBRO[XUBIO_DEFAULTS.condicionDePago];
+  if (cuentaCobro) {
+    payload.transaccionCobranzaItems = [
+      {
+        cuentaTipo: cuentaCobro.cuentaTipo,
+        cuentaId: cuentaCobro.cuentaId,
+        moneda: { ID: -2 }, // Pesos Argentinos, igual que en la factura real leída
+        cotizacionMonTransaccion: 1,
+        importeMonPrincipal: servicio.precio,
+        importeMonTransaccion: servicio.precio,
+        descripcion: '',
+      },
+    ];
+  }
 
   if (XUBIO_DEFAULTS.vendedorId) {
     payload.vendedor = { vendedorId: Number(XUBIO_DEFAULTS.vendedorId) };
