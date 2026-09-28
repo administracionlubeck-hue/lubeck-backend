@@ -419,6 +419,17 @@ async function crearFacturaVenta(servicio) {
     payload.provincia = { ID: Number(XUBIO_DEFAULTS.provinciaId) };
   }
 
+  // 28/9: log temporal de diagnóstico — imprime en los Logs de Render
+  // exactamente qué puntoVenta/condicionDePago se está mandando de verdad,
+  // para descartar de una vez si el problema es el dato que sale de acá o
+  // otra cosa del lado de Xubio. Sacar este log cuando ya no haga falta.
+  console.log('[crearFacturaVenta] payload que se manda a /facturar:', JSON.stringify({
+    puntoVenta: payload.puntoVenta,
+    condicionDePago: payload.condicionDePago,
+    transaccionCobranzaItems: payload.transaccionCobranzaItems,
+    cliente: payload.cliente,
+  }));
+
   // 22/9: soporte de Xubio recomendó usar /facturar en vez de
   // /comprobanteVentaBean para crear facturas por API (ver comentario
   // grande al principio del archivo). Las lecturas (GET) siguen contra
