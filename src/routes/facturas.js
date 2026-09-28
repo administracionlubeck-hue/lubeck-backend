@@ -27,9 +27,13 @@ router.post('/', async (req, res) => {
     const factura = await crearFacturaVenta(req.body);
     res.json({ ok: true, factura });
   } catch (err) {
-    // Mientras crearFacturaVenta() no esté completada (ver src/xubio/client.js),
-    // esto va a devolver ese error explicando qué falta — es lo esperado por ahora.
-    res.status(501).json({ ok: false, error: err.message });
+    // 28/9: antes esto solo devolvía err.message ("Xubio respondió 401 en
+    // POST /facturar"), que es justo el código de estado enganoso que viene
+    // repitiéndose en toda esta integración — no dice CUÁL fue el error de
+    // validación real. Ahora también devolvemos err.body ("detalle"), que
+    // es donde Xubio manda el mensaje real (ej. la FunctionalException que
+    // explicó soporte) — mismo campo que ya usa xubio-debug.js.
+    res.status(err.status || 501).json({ ok: false, error: err.message, detalle: err.body });
   }
 });
 
