@@ -12,6 +12,9 @@ const router = express.Router();
 //   "tipoServicio": "Cambio de batería",
 //   "bateria": "Moura M22FD",
 //   "precio": 145000,
+//   "medioPago": "Contado (efectivo)",   // 29/9: opcional — ver normalizarMedioPago() en xubio/client.js.
+//                                        // Acepta "Tarjeta de crédito" / "Tarjeta de débito" / "Contado (efectivo)" /
+//                                        // "Transferencia" / "Cuenta corriente". Si no viene, usa el default (Contado).
 //   "comentarios": "..."
 // }
 router.post('/', async (req, res) => {
