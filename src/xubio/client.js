@@ -99,11 +99,33 @@
 // confirmación de que `ProductoVentaBean` (el que ya se usa en
 // buscarProductoPorNombre) es el correcto.
 //
-// ✅✅ CONFIRMADO FUNCIONANDO — soporte de Xubio probó nuestro payload exacto
-// contra `/facturar` (28/9) y devolvió `HTTP 200` con una factura real
-// (`transaccionid: 94150317`, `numeroDocumento: "B-00006-00000001"`). El
-// endpoint, el punto de venta (264532) y el producto están 100% validados.
-// El 401 que veníamos viendo **no era un problema de permisos** — era, una
+// ✅✅✅ CONFIRMADO FUNCIONANDO DE PUNTA A PUNTA, DESDE NUESTRO PROPIO BACKEND
+// (28/9) — `POST /api/facturas` contra el backend real en Render devolvió
+// `HTTP 200` con una factura real de verdad (`transaccionid: 94232922`,
+// `numeroDocumento: "B-00006-00000003"`, Contado, con `transaccionCobranzaItems`
+// completo). Esta fue la primera factura creada por la integración misma
+// (no por una prueba manual de soporte) — cierra el bug que bloqueó todo
+// este capítulo.
+//
+// ⚠️ CAUSA FINAL DEL ÚLTIMO 401 (que parecía el problema del punto de venta
+// otra vez): NO era un problema de Xubio ni de código — la variable
+// `XUBIO_PUNTO_VENTA_ID` en Render estaba cargada en un **"Environment
+// Group"** separado que nunca se había vinculado ("linked") al servicio
+// `lubeck-backend`. O sea: el valor `264532` se veía bien en la pantalla de
+// Render, pero el servidor real seguía sin recibirlo y caía al default
+// hardcodeado de acá abajo (`188771`, Local 3, que no es "Automático" — de
+// ahí el mismo mensaje viejo "solo admite punto de venta automático"). Se
+// resolvió cargando la variable directo en la pestaña "Environment" del
+// servicio (no en un grupo aparte). Ojo con este mismo error si se agregan
+// variables nuevas más adelante (ej. para WhatsApp): siempre confirmarlas
+// en la pestaña Environment DEL SERVICIO, no de un Environment Group suelto.
+//
+// ✅✅ CONFIRMADO FUNCIONANDO (soporte) — soporte de Xubio había probado antes
+// nuestro payload exacto contra `/facturar` (28/9) y devolvió `HTTP 200` con
+// una factura real (`transaccionid: 94150317`, `numeroDocumento:
+// "B-00006-00000001"`). El endpoint, el punto de venta (264532) y el
+// producto ya estaban 100% validados desde ese momento. El 401 que veníamos
+// viendo en ese momento **no era un problema de permisos** — era, una
 // vez más (mismo patrón que el 500 genérico de semanas atrás), un error de
 // validación de datos disfrazado de un código HTTP que no tenía nada que
 // ver. El error real, según soporte: con `condicionDePago: 2` (Contado),
@@ -185,12 +207,32 @@
 // confirmará leyendo una factura real de cada uno cuando se necesite, nunca
 // adivinando.
 //
-// Falta todavía (no bloquea Contado ni Transferencia, que ya están
-// resueltos): escribir la lógica que elige `condicionDePago` dinámicamente
-// según el método de pago real de cada servicio (hoy `crearFacturaVenta()`
-// usa siempre el mismo default de `XUBIO_DEFAULTS.condicionDePago` para
-// todas las facturas) — así como los `cuentaTipo`/`cuentaId` de tarjeta de
-// crédito/débito si resultan ser necesarios.
+// ✅ IMPLEMENTADO (29/9) — `crearFacturaVenta()` ahora elige `condicionDePago`
+// dinámicamente según `servicio.medioPago`, el mismo dato de "método de
+// pago" (Tarjeta de crédito / Tarjeta de débito / Contado / Transferencia /
+// Cuenta corriente) que ya captura la interfaz de Técnicos Lubeck y
+// Administración Lubeck desde el 15/9. Ver `normalizarMedioPago()` y
+// `CONDICION_DE_PAGO_POR_MEDIO` más abajo — acepta tanto el label literal
+// que guardan hoy los prototipos ("Tarjeta de crédito", etc.) como
+// variantes normalizadas, para no depender de que el texto coincida
+// carácter por carácter el día que esto se conecte a datos reales.
+//
+// Si `servicio.medioPago` no viene (o no se reconoce), se usa el mismo
+// default de siempre (`XUBIO_DEFAULTS.condicionDePago`, Contado) — esto
+// replica el comportamiento anterior para no romper nada, y tiene sentido
+// de negocio (la mayoría de las ventas de Lubeck son al contado), pero es
+// una decisión tomada acá, no confirmada con Leandro — si en algún momento
+// conviene que "sin especificar" haga otra cosa (ej. no facturar todavía,
+// o marcarlo para revisión manual), avisar para ajustarlo.
+//
+// Pendiente (no bloquea nada de lo anterior, Contado/Transferencia/Cuenta
+// Corriente ya cubren la gran mayoría de los casos reales): confirmar si
+// tarjeta de crédito (4) y tarjeta de débito (5) necesitan también
+// `transaccionCobranzaItems` — no está en `CUENTAS_DE_COBRO`, así que hoy
+// se mandan con el array vacío. Si Xubio los rechaza (se va a ver clarito
+// en el `detalle` del error gracias al arreglo de `routes/facturas.js`),
+// hay que leer una factura real de cada uno y sumarla a `CUENTAS_DE_COBRO`,
+// mismo procedimiento que ya se hizo con Contado.
 
 const XUBIO_DEFAULTS = {
   clienteConsumidorFinalId: process.env.XUBIO_CLIENTE_CONSUMIDOR_FINAL_ID || '7799597',
@@ -215,6 +257,46 @@ const CUENTAS_DE_COBRO = {
   // exige transaccionCobranzaItems para esos dos (queda vacío, y así está
   // bien). Ver bloque "RESUELTO (28/9)" más arriba.
 };
+
+// Mapeo de "método de pago" (el dato de 5 opciones que ya captura la
+// interfaz de Técnicos Lubeck / Administración Lubeck desde el 15/9) a
+// `condicionDePago` de Xubio — confirmado 28/9, ver comentario grande al
+// principio del archivo.
+const CONDICION_DE_PAGO_POR_MEDIO = {
+  contado: 2,
+  tarjeta_credito: 4,
+  tarjeta_debito: 5,
+  transferencia: 7,
+  cuenta_corriente: 1,
+};
+
+/**
+ * Traduce el texto de "método de pago" tal como lo guardan hoy los
+ * prototipos (ej. "Tarjeta de crédito", "Contado (efectivo)") a una de las
+ * claves de CONDICION_DE_PAGO_POR_MEDIO. Case-insensitive y sin tildes, para
+ * no depender de que el texto coincida carácter por carácter el día que
+ * esto se conecte a datos reales. Devuelve null si no reconoce nada (ej. si
+ * viene vacío/"sin especificar", o un texto inesperado).
+ *
+ * @param {string} [texto]
+ * @returns {'contado'|'tarjeta_credito'|'tarjeta_debito'|'transferencia'|'cuenta_corriente'|null}
+ */
+function normalizarMedioPago(texto) {
+  if (!texto) return null;
+  const limpio = texto
+    .toString()
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '') // saca tildes (crédito -> credito)
+    .toLowerCase()
+    .trim();
+
+  if (limpio.includes('credito')) return 'tarjeta_credito';
+  if (limpio.includes('debito')) return 'tarjeta_debito';
+  if (limpio.includes('transferencia')) return 'transferencia';
+  if (limpio.includes('cuenta corriente') || limpio.includes('cuenta_corriente')) return 'cuenta_corriente';
+  if (limpio.includes('contado') || limpio.includes('efectivo')) return 'contado';
+  return null;
+}
 
 const BASE_URL = 'https://xubio.com/API/1.1';
 
@@ -341,6 +423,11 @@ async function buscarProductoPorNombre(nombre) {
  * @param {string} [servicio.bateria] - nombre del producto en el catálogo de
  *   Xubio (ej. "Bateria Lubeck 12/75") — tiene que existir ahí previamente.
  * @param {number} servicio.precio - precio final, con IVA incluido.
+ * @param {string} [servicio.medioPago] - "Tarjeta de crédito" / "Tarjeta de
+ *   débito" / "Contado (efectivo)" / "Transferencia" / "Cuenta corriente"
+ *   (el mismo dato que ya captura Técnicos Lubeck / Administración Lubeck) —
+ *   ver normalizarMedioPago() más arriba. Si no viene o no se reconoce, se
+ *   usa el default de siempre (Contado).
  */
 async function crearFacturaVenta(servicio) {
   if (!servicio.bateria) {
@@ -359,6 +446,11 @@ async function crearFacturaVenta(servicio) {
     );
   }
 
+  const medioPagoKey = normalizarMedioPago(servicio.medioPago);
+  const condicionDePago = medioPagoKey
+    ? CONDICION_DE_PAGO_POR_MEDIO[medioPagoKey]
+    : XUBIO_DEFAULTS.condicionDePago; // sin medioPago reconocible: default de siempre (Contado)
+
   const hoy = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
 
   const payload = {
@@ -371,7 +463,7 @@ async function crearFacturaVenta(servicio) {
     listaDePrecio: { ID: Number(XUBIO_DEFAULTS.listaDePrecioId) },
     deposito: { ID: Number(XUBIO_DEFAULTS.depositoId) },
     circuitoContable: { ID: Number(XUBIO_DEFAULTS.circuitoContableId) },
-    condicionDePago: XUBIO_DEFAULTS.condicionDePago,
+    condicionDePago: condicionDePago,
     cotizacion: 1,
     cotizacionListaDePrecio: 1,
     facturaNoExportacion: false,
@@ -394,10 +486,13 @@ async function crearFacturaVenta(servicio) {
   };
 
   // Si tenemos la cuenta de cobro real de Lubeck para este condicionDePago
-  // (ver CUENTAS_DE_COBRO arriba), armamos el ítem — Xubio lo exige para
-  // los métodos de cobro inmediato (confirmado para Contado/2; ver nota
-  // arriba sobre 3/4/5/6/7 todavía sin confirmar).
-  const cuentaCobro = CUENTAS_DE_COBRO[XUBIO_DEFAULTS.condicionDePago];
+  // (ver CUENTAS_DE_COBRO arriba), armamos el ítem — confirmado que hace
+  // falta para Contado/2; confirmado que NO hace falta para Cuenta
+  // Corriente/1 ni Transferencia/7 (por eso no tienen entrada en el mapa,
+  // y acá quedan con transaccionCobranzaItems vacío, correctamente). Para
+  // tarjeta de crédito/débito (4/5) todavía no está confirmado — hoy
+  // también quedan vacíos hasta que se confirme con una factura real.
+  const cuentaCobro = CUENTAS_DE_COBRO[condicionDePago];
   if (cuentaCobro) {
     payload.transaccionCobranzaItems = [
       {
@@ -418,17 +513,6 @@ async function crearFacturaVenta(servicio) {
   if (XUBIO_DEFAULTS.provinciaId) {
     payload.provincia = { ID: Number(XUBIO_DEFAULTS.provinciaId) };
   }
-
-  // 28/9: log temporal de diagnóstico — imprime en los Logs de Render
-  // exactamente qué puntoVenta/condicionDePago se está mandando de verdad,
-  // para descartar de una vez si el problema es el dato que sale de acá o
-  // otra cosa del lado de Xubio. Sacar este log cuando ya no haga falta.
-  console.log('[crearFacturaVenta] payload que se manda a /facturar:', JSON.stringify({
-    puntoVenta: payload.puntoVenta,
-    condicionDePago: payload.condicionDePago,
-    transaccionCobranzaItems: payload.transaccionCobranzaItems,
-    cliente: payload.cliente,
-  }));
 
   // 22/9: soporte de Xubio recomendó usar /facturar en vez de
   // /comprobanteVentaBean para crear facturas por API (ver comentario
